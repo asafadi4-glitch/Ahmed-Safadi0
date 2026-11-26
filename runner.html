@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#10172b">
+<title>سباق المدينة</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;min-height:100%;font-family:Tahoma,Arial,sans-serif;background:#090f20;color:#fff;overflow:hidden;touch-action:none}
+body{display:flex;justify-content:center;align-items:center;padding:10px}
+.game{width:min(100%,520px);height:min(94dvh,900px);display:flex;flex-direction:column;gap:9px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.logo{font-size:clamp(18px,5vw,25px);font-weight:900;letter-spacing:.2px}.logo span{color:#ffd34e}
+.pill{background:#1a2540;border:1px solid #35466d;border-radius:12px;padding:8px 11px;font-size:12px;color:#dce7ff}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:linear-gradient(145deg,#1c2948,#121b32);border:1px solid #314366;border-radius:13px;text-align:center;padding:7px}
+.stat small{display:block;color:#aab8d6;font-size:10px;margin-bottom:3px}.stat b{font-size:18px;color:#fff}
+.stage{position:relative;flex:1;min-height:250px;border:2px solid #34476d;border-radius:22px;overflow:hidden;background:#8bd7ed;box-shadow:0 15px 45px #0008}
+canvas{display:block;width:100%;height:100%}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:22px;background:#081126a8;backdrop-filter:blur(5px);text-align:center}
+.panel{width:min(100%,310px);background:linear-gradient(155deg,#202f52f5,#101a32f5);border:1px solid #6479a4;border-radius:20px;padding:22px 18px;box-shadow:0 12px 35px #0007}
+.panel h2{font-size:25px;margin:0 0 8px}.panel p{font-size:13px;color:#d0dcf4;line-height:1.8;margin:0 0 15px}
+button{border:0;border-radius:13px;padding:12px 19px;font-family:inherit;font-weight:bold;font-size:15px;cursor:pointer;color:#17203a;background:linear-gradient(135deg,#ffe27a,#ffb52f);box-shadow:0 5px 0 #b87517}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 #b87517}
+.controls{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hint{font-size:11px;line-height:1.6;color:#aab8d6;text-align:center;flex:1}
+.ctrl{width:52px;height:45px;padding:0;font-size:19px;background:linear-gradient(135deg,#263a63,#172747);color:#fff;border:1px solid #536b98;box-shadow:0 4px 0 #0a1326}
+@media(min-width:600px){.game{height:min(94vh,900px)}}
+</style>
+</head>
+<body>
+<main class="game">
+ <header class="header"><div class="logo">🏃 سباق <span>المدينة</span></div><div class="pill">اسحب للتحكم ✨</div></header>
+ <section class="stats">
+  <div class="stat"><small>النقاط</small><b id="score">0</b></div>
+  <div class="stat"><small>العملات</small><b id="coins">0</b></div>
+  <div class="stat"><small>أفضل نتيجة</small><b id="best">0</b></div>
+ </section>
+ <section class="stage" id="stage">
+  <canvas id="gameCanvas"></canvas>
+  <div class="overlay" id="overlay">
+   <div class="panel"><h2 id="panelTitle">🏙️ انطلق في المدينة!</h2><p id="panelText">اجمع العملات وتفادى القطارات والحواجز. اسحب يميناً ويساراً لتغيير المسار، للأعلى للقفز وللأسفل للانزلاق.</p><button id="startBtn">ابدأ اللعب</button></div>
+  </div>
+ </section>
+ <footer class="controls">
+  <button class="ctrl" id="leftBtn" aria-label="يسار">◀</button>
+  <div class="hint">يمين / يسار: تغيير المسار<br>أعلى: قفز · أسفل: انزلاق</div>
+  <button class="ctrl" id="rightBtn" aria-label="يمين">▶</button>
+ </footer>
+</main>
+<script>
+(()=>{
+const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+let W=0,H=0,dpr=1,playing=false,last=0,elapsed=0,score=0,coins=0,speed=340,spawn=0,objects=[],particles=[];
+let lane=1,playerX=1,jump=0,slide=0,hitFlash=0,best=Number(localStorage.getItem('cityRunnerBest')||0);
+$('best').textContent=best;
+function resize(){const r=canvas.getBoundingClientRect();dpr=Math.min(devicePixelRatio||1,2);W=r.width;H=r.height;canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0)}
+new ResizeObserver(resize).observe(canvas);resize();
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function road(){return {top:H*.10,bottom:H*.99,center:W/2,topHalf:W*.17,bottomHalf:W*.48}}
+function laneX(n,y){const r=road(),t=clamp((y-r.top)/(r.bottom-r.top),0,1),half=r.topHalf+(r.bottomHalf-r.topHalf)*t;return r.center+(n-1)*half*.62}
+function rounded(x,y,w,h,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill()}
+function drawScene(){
+ const sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#67c6e8');sky.addColorStop(.55,'#c1e7dc');sky.addColorStop(1,'#f4c77d');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // distant skyline
+ for(let i=0;i<13;i++){let bw=W/9, x=i*bw-(i%2)*13, bh=H*(.12+(i*17%9)/45);ctx.fillStyle=i%2?'#688eaa':'#547a99';ctx.fillRect(x,H*.34-bh,bw*.82,bh);ctx.fillStyle='#d8e9df';for(let wy=H*.34-bh+9;wy<H*.34-8;wy+=13)for(let wx=x+7;wx<x+bw*.7;wx+=13){ctx.fillRect(wx,wy,4,5)}}
+ const r=road();ctx.fillStyle='#3d5265';ctx.beginPath();ctx.moveTo(r.center-r.topHalf,r.top);ctx.lineTo(r.center+r.topHalf,r.top);ctx.lineTo(r.center+r.bottomHalf,H);ctx.lineTo(r.center-r.bottomHalf,H);ctx.closePath();ctx.fill();
+ // track edges
+ ctx.strokeStyle='#d8e3dc';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(r.center-r.topHalf,r.top);ctx.lineTo(r.center-r.bottomHalf,H);ctx.moveTo(r.center+r.topHalf,r.top);ctx.lineTo(r.center+r.bottomHalf,H);ctx.stroke();
+ // lane markings
+ for(let n=0;n<2;n++){let topX=r.center+(n-.5)*r.topHalf*.62,bottomX=r.center+(n-.5)*r.bottomHalf*.62;ctx.strokeStyle='#c5d1d0';ctx.lineWidth=2;ctx.setLineDash([13,12]);ctx.beginPath();ctx.moveTo(topX,r.top);ctx.lineTo(bottomX,H);ctx.stroke()}ctx.setLineDash([]);
+ // sleepers
+ for(let i=0;i<14;i++){let t=((i/14+elapsed*.42)%1),y=r.top+t*(H-r.top),half=r.topHalf+(r.bottomHalf-r.topHalf)*t;ctx.strokeStyle='#283d4b';ctx.lineWidth=2+t*4;ctx.beginPath();ctx.moveTo(W/2-half,y);ctx.lineTo(W/2+half,y);ctx.stroke()}
+}
+function drawCoin(o){let x=laneX(o.lane,o.y),scale=.35+o.p*.85,rad=9*scale;ctx.save();ctx.translate(x,o.y);ctx.scale(1,.82);ctx.fillStyle='#b96b13';ctx.beginPath();ctx.arc(0,0,rad+2,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffd94e';ctx.beginPath();ctx.arc(0,0,rad,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#fff1a0';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,rad*.55,0,Math.PI*2);ctx.stroke();ctx.restore()}
+function drawObstacle(o){let x=laneX(o.lane,o.y),scale=.35+o.p*.9,w=48*scale,h=(o.type==='train'?90: o.type==='barrier'?35:52)*scale;
+ if(o.type==='train'){rounded(x-w/2,o.y-h,w,h,8,'#263c62');rounded(x-w/2+5,o.y-h+8,w-10,h*.34,5,'#72d4e8');ctx.fillStyle='#f7d46b';ctx.fillRect(x-w/2+5,o.y-h*.52,w-10,5);ctx.fillStyle='#111c31';ctx.fillRect(x-w/2+6,o.y-8,w-12,8)}
+ else if(o.type==='barrier'){rounded(x-w/2,o.y-h,w,h,5,'#e85e50');ctx.fillStyle='#ffe3a4';for(let k=-1;k<=1;k++)ctx.fillRect(x+k*w*.28-3,o.y-h+4,6,h-8);ctx.fillStyle='#28364b';ctx.fillRect(x-w*.43,o.y-3,w*.86,6)}
+ else {rounded(x-w/2,o.y-h,w,h,7,'#b64b37');rounded(x-w/2+5,o.y-h+5,w-10,h*.3,4,'#f5c66d');ctx.fillStyle='#24364d';ctx.fillRect(x-w/2+5,o.y-h*.36,w-10,h*.2)}
+}
+function drawPlayer(){
+ let x=laneX(playerX,H*.83),ground=H*.83,jumpY=jump>0?Math.sin((1-jump/0.72)*Math.PI)*H*.18:0;
+ let y=ground-jumpY,scale=clamp(W/390,.78,1.12),bodyH=slide>0?31:55,bodyW=slide>0?48:28;
+ // shadow
+ ctx.fillStyle='#17263c55';ctx.beginPath();ctx.ellipse(x,ground+5,22*scale*(1-jumpY/H),6,0,0,Math.PI*2);ctx.fill();
+ ctx.save();ctx.translate(x,y);ctx.scale(scale,scale);
+ if(slide>0){ctx.rotate(-.12);rounded(-25,-24,50,22,10,'#f15a45');rounded(8,-34,20,18,8,'#f4bd85');ctx.fillStyle='#273b59';ctx.fillRect(-19,-4,13,10);ctx.fillRect(7,-4,13,10)}
+ else{
+  // legs
+  let run=Math.sin(elapsed*17)*5;ctx.strokeStyle='#263b59';ctx.lineWidth=8;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(-7,18);ctx.lineTo(-9+run,36);ctx.moveTo(7,18);ctx.lineTo(9-run,36);ctx.stroke();
+  rounded(-17,34,18,7,4,'#f4f4f5');rounded(1,34,18,7,4,'#f4f4f5');
+  // arms
+  ctx.strokeStyle='#eeb58b';ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(-12,-5);ctx.lineTo(-22,10+run*.5);ctx.moveTo(12,-5);ctx.lineTo(22,8-run*.5);ctx.stroke();
+  rounded(-15,-13,30,34,9,'#f05245');ctx.fillStyle='#ffd34e';ctx.fillRect(-14,-5,28,5);
+  ctx.fillStyle='#eeb58b';ctx.beginPath();ctx.arc(0,-23,12,0,Math.PI*2);ctx.fill();
+  rounded(-12,-35,24,9,5,'#263b59');ctx.fillStyle='#263b59';ctx.fillRect(-9,-40,18,7);
+ }
+ ctx.restore();
+}
+function draw(){drawScene();objects.sort((a,b)=>a.y-b.y);for(const o of objects){if(o.kind==='coin')drawCoin(o);else drawObstacle(o)}drawPlayer();
+ if(hitFlash>0){ctx.fillStyle=`rgba(255,65,65,${hitFlash*.2})`;ctx.fillRect(0,0,W,H)}
+}
+function spawnWave(){let lanePick=Math.floor(Math.random()*3),roll=Math.random();if(roll<.36){for(let i=0;i<5;i++)objects.push({kind:'coin',lane:lanePick,y:-i*38,p:0})}else{objects.push({kind:'obstacle',type:roll<.62?'barrier':roll<.82?'train':'low',lane:lanePick,y:-30,p:0});if(Math.random()<.36){let other=(lanePick+1+Math.floor(Math.random()*2))%3;objects.push({kind:'coin',lane:other,y:-125,p:0})}}}
+function update(dt){elapsed+=dt;speed=Math.min(690,340+elapsed*5);score+=dt*speed*.055;$('score').textContent=Math.floor(score);playerX+=(lane-playerX)*Math.min(1,dt*13);jump=Math.max(0,jump-dt);slide=Math.max(0,slide-dt);hitFlash=Math.max(0,hitFlash-dt*3);
+ spawn-=dt;if(spawn<=0){spawnWave();spawn=Math.max(.52,1.05-(speed-340)/900)}
+ for(let o of objects){o.y+=speed*dt*(o.kind==='coin'?1:1);o.p=clamp(o.y/H,0,1)}
+ const px=laneX(playerX,H*.83);
+ for(let i=objects.length-1;i>=0;i--){let o=objects[i];if(o.kind==='coin'){if(Math.abs(o.y-H*.79)<22&&Math.abs(laneX(o.lane,o.y)-px)<W*.11){coins++;$('coins').textContent=coins;objects.splice(i,1);continue}}else if(Math.abs(o.y-H*.83)<22&&o.lane===Math.round(playerX)){
+ let safe=(o.type==='barrier'&&jump>0)||(o.type==='low'&&slide>0);
+ if(!safe){endGame();return}
+ o.kind='passed';}
+ if(o.y>H+80)objects.splice(i,1)}
+}
+function frame(t){if(!playing)return;let dt=Math.min((t-last)/1000||0,.035);last=t;update(dt);draw();if(playing)requestAnimationFrame(frame)}
+function start(){score=0;coins=0;elapsed=0;speed=340;spawn=.4;objects=[];lane=1;playerX=1;jump=slide=hitFlash=0;playing=true;$('score').textContent='0';$('coins').textContent='0';$('overlay').style.display='none';last=performance.now();requestAnimationFrame(frame)}
+function endGame(){playing=false;hitFlash=1;best=Math.max(best,Math.floor(score));localStorage.setItem('cityRunnerBest',best);$('best').textContent=best;$('panelTitle').textContent='انتهت الجولة!';$('panelText').innerHTML=`نتيجتك: <b>${Math.floor(score)}</b> نقطة<br>جمعت <b>${coins}</b> عملة. جرّب مرة ثانية وحطّم رقمك!`;$('startBtn').textContent='العب مرة ثانية';$('overlay').style.display='flex';draw()}
+function move(d){if(!playing)return;if(d==='left')lane=Math.max(0,lane-1);if(d==='right')lane=Math.min(2,lane+1);if(d==='up'&&jump<=0&&slide<=0)jump=.72;if(d==='down'&&jump<=0)slide=.55}
+$('startBtn').addEventListener('click',start);$('leftBtn').addEventListener('click',()=>move('left'));$('rightBtn').addEventListener('click',()=>move('right'));
+let sx=0,sy=0;canvas.addEventListener('pointerdown',e=>{sx=e.clientX;sy=e.clientY});canvas.addEventListener('pointerup',e=>{let dx=e.clientX-sx,dy=e.clientY-sy;if(Math.max(Math.abs(dx),Math.abs(dy))<18)return;if(Math.abs(dx)>Math.abs(dy))move(dx>0?'left':'right');else move(dy<0?'up':'down')});
+window.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();if(e.key==='ArrowLeft'||e.key==='a')move('left');if(e.key==='ArrowRight'||e.key==='d')move('right');if(e.key==='ArrowUp'||e.key===' ')move('up');if(e.key==='ArrowDown'||e.key==='s')move('down')});
+draw();
+})();
+</script>
+</body>
+</html>
